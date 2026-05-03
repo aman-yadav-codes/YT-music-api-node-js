@@ -1,7 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const YTMusic = require('ytmusic-api');
-const youtubedl = require('youtube-dl-exec');
+const ytdl = require('@distube/ytdl-core');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -129,44 +129,48 @@ app.get('/api/stream', async (req, res) => {
 
     try {
         const url = `https://www.youtube.com/watch?v=${id}`;
-        
-        // Tell yt-dlp to dump JSON metadata and extract the best audio format
-        const output = await youtubedl(url, {
-            dumpJson: true,
-            format: 'bestaudio'
-        });
 
-        if (!output || !output.formats) {
-            return res.status(404).json({ success: false, error: 'Could not extract stream URL.' });
-        }
+        // Use @distube/ytdl-core to get video info and formats
+        const info = await ytdl.getInfo(url);
 
         // Filter for audio-only formats
-        const audioFormats = output.formats.filter(f => f.vcodec === 'none' && f.acodec !== 'none' && f.url);
-        
+        const audioFormats = ytdl.filterFormats(info.formats, 'audioonly');
+
+        if (!audioFormats || audioFormats.length === 0) {
+            return res.status(404).json({ success: false, error: 'Could not extract stream URL. No audio formats found.' });
+        }
+
+        // Get the best audio format
+        const bestAudio = ytdl.chooseFormat(audioFormats, { quality: 'highestaudio' });
+
         const alternativeFormats = audioFormats.map(f => ({
-            itag: f.format_id,
-            formatNote: f.format_note || f.format,
-            ext: f.ext,
-            acodec: f.acodec,
-            abr: f.abr,
+            itag: f.itag,
+            formatNote: f.qualityLabel || f.audioQuality,
+            ext: f.container,
+            acodec: f.audioCodec,
+            abr: f.audioBitrate,
             url: f.url
         }));
 
-        res.json({ 
-            success: true, 
+        res.json({
+            success: true,
             data: {
-                title: output.title,
+                title: info.videoDetails.title,
                 videoId: id,
                 bestAudio: {
-                    format: output.format,
-                    streamUrl: output.url
+                    format: bestAudio.audioCodec,
+                    streamUrl: bestAudio.url
                 },
                 allAudioFormats: alternativeFormats
-            } 
+            }
         });
     } catch (error) {
         console.error('Error extracting stream URL:', error.message);
-        res.status(500).json({ success: false, error: 'Failed to extract stream URL. The video might be private, region-locked, or the signature changed.' });
+        res.status(500).json({
+            success: false,
+            error: 'Failed to extract stream URL. The video might be private, region-locked, or the signature changed.',
+            details: error.message
+        });
     }
 });
 
