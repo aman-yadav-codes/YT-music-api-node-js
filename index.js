@@ -1,7 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const YTMusic = require('ytmusic-api');
-const ytdl = require('@distube/ytdl-core');
+const play = require('play-dl');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -130,36 +130,35 @@ app.get('/api/stream', async (req, res) => {
     try {
         const url = `https://www.youtube.com/watch?v=${id}`;
 
-        // Use @distube/ytdl-core to get video info and formats
-        const info = await ytdl.getInfo(url);
+        // Use play-dl to get video info
+        const info = await play.video_info(url);
 
-        // Filter for audio-only formats
-        const audioFormats = ytdl.filterFormats(info.formats, 'audioonly');
+        // Find formats that contain a playable URL (play-dl sometimes hides deciphered URLs for audio-only streams)
+        const playableFormats = info.format.filter(f => f.url);
 
-        if (!audioFormats || audioFormats.length === 0) {
-            return res.status(404).json({ success: false, error: 'Could not extract stream URL. No audio formats found.' });
+        if (!playableFormats || playableFormats.length === 0) {
+            return res.status(404).json({ success: false, error: 'Could not extract playable stream URL.' });
         }
 
-        // Get the best audio format
-        const bestAudio = ytdl.chooseFormat(audioFormats, { quality: 'highestaudio' });
+        // play-dl usually provides the lowest resolution combined stream (video+audio) with a direct URL
+        const bestFormat = playableFormats[0];
 
-        const alternativeFormats = audioFormats.map(f => ({
+        const alternativeFormats = playableFormats.map(f => ({
             itag: f.itag,
-            formatNote: f.qualityLabel || f.audioQuality,
-            ext: f.container,
-            acodec: f.audioCodec,
-            abr: f.audioBitrate,
+            formatNote: f.quality,
+            ext: f.container || 'mp4',
+            mimeType: f.mimeType,
             url: f.url
         }));
 
         res.json({
             success: true,
             data: {
-                title: info.videoDetails.title,
+                title: info.video_details.title,
                 videoId: id,
                 bestAudio: {
-                    format: bestAudio.audioCodec,
-                    streamUrl: bestAudio.url
+                    format: bestFormat.mimeType,
+                    streamUrl: bestFormat.url
                 },
                 allAudioFormats: alternativeFormats
             }
